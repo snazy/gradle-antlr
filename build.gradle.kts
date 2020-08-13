@@ -35,7 +35,7 @@ java {
 }
 
 group = "org.caffinitas.gradle.antlr"
-version = "0.1"
+version = "0.1.1"
 val readableName = "Plugin to work around include-files issue with AntlrTask"
 description = "Plugin to work around include-files issue with AntlrTask"
 

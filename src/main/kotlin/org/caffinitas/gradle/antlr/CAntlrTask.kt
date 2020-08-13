@@ -14,12 +14,10 @@
 package org.caffinitas.gradle.antlr
 
 import org.gradle.api.Incubating
+import org.gradle.api.file.FileCollection
 import org.gradle.api.file.SourceDirectorySet
 import org.gradle.api.plugins.antlr.AntlrTask
-import org.gradle.api.plugins.antlr.internal.AntlrResult
-import org.gradle.api.plugins.antlr.internal.AntlrSourceGenerationException
-import org.gradle.api.plugins.antlr.internal.AntlrSpecFactory
-import org.gradle.api.plugins.antlr.internal.AntlrWorkerManager
+import org.gradle.api.plugins.antlr.internal.*
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.TaskAction
@@ -50,22 +48,43 @@ open class CAntlrTask @Inject constructor(@Internal val antlrTask: TaskProvider<
         // Note: cannot really handle incremental grammar generation (but doesn't actually matter, as there's
         // just one Cql.g file in C* anyway).
         val grammarFiles: Set<File> = HashSet(stableSources.files)
-        val sourceDirectorySet: SourceDirectorySet
-        try {
-            val f = AntlrTask::class.java.getDeclaredField("sourceDirectorySet")
-            f.isAccessible = true
-            sourceDirectorySet = f[antlrTask.get()] as SourceDirectorySet
-        } catch (e: Exception) {
-            throw RuntimeException(e)
-        }
         val processGrammarFiles = grammarFiles.stream()
                 .filter { f: File -> !includeFiles.contains(f.name) }
                 .collect(Collectors.toSet())
         val manager = AntlrWorkerManager()
-        val spec = AntlrSpecFactory().create(this, processGrammarFiles, sourceDirectorySet)
+        val spec = antlrSpec(processGrammarFiles)
         val projectDir = projectLayout.projectDirectory.asFile
         val result = manager.runWorker(projectDir, workerProcessBuilderFactory, antlrClasspath, spec)
         evaluate(result)
+    }
+
+    private fun antlrSpec(processGrammarFiles: Set<File>?): AntlrSpec {
+        try {
+            return try {
+                val sourceDirectorySet = antlrTaskField("sourceDirectorySet") as SourceDirectorySet
+
+                // class AntlrSpecFactory:
+                //     public AntlrSpec create(AntlrTask antlrTask, Set<File> grammarFiles, SourceDirectorySet sourceDirectorySet) {
+                AntlrSpecFactory::class.java.getDeclaredMethod("create", AntlrTask::class.java, Set::class.java, SourceDirectorySet::class.java)
+                        .invoke(AntlrSpecFactory(), this, processGrammarFiles, sourceDirectorySet) as AntlrSpec
+            } catch (e: NoSuchFieldException) {
+                // Since Gradle 6.6
+                val sourceSetDirectories = antlrTaskField("sourceSetDirectories") as FileCollection
+
+                // class AntlrSpecFactory:
+                //     public AntlrSpec create(AntlrTask antlrTask, Set<File> grammarFiles, FileCollection sourceSetDirectories) {
+                AntlrSpecFactory::class.java.getDeclaredMethod("create", AntlrTask::class.java, Set::class.java, FileCollection::class.java)
+                        .invoke(AntlrSpecFactory(), this, processGrammarFiles, sourceSetDirectories) as AntlrSpec
+            }
+        } catch (e: Exception) {
+            throw RuntimeException(e)
+        }
+    }
+
+    private fun antlrTaskField(field: String): Any {
+        val f = AntlrTask::class.java.getDeclaredField(field)
+        f.isAccessible = true
+        return f[antlrTask.get()]
     }
 
     private fun evaluate(result: AntlrResult) {
